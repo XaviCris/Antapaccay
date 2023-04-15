@@ -1,0 +1,151 @@
+---
+title: "Proyecto_RMARKDOWN"
+author: "Xavier"
+date: "2023-04-15"
+output: html_document
+---
+
+```{r}
+#install.packages("shiny")
+library(shiny)
+library(readxl)
+library(sp)
+library(RODBC)
+
+# Define UI para la aplicación shiny
+ui <- fluidPage(
+  
+  # Agregar los widgets de fecha inicial y final
+  fluidRow(
+    column(width = 3,
+           dateInput("fecha_inicial", "Fecha Inicial", value = Sys.Date() - 1)),
+    column(width = 3,
+           dateInput("fecha_final", "Fecha Final", value = Sys.Date()))
+  ),
+  
+  # Agregar la tabla resultante
+  fluidRow(
+    column(width = 12,
+           tableOutput("resultado_table"))
+  ),
+  
+  # Agregar la gráfica de polígono y puntos
+  fluidRow(
+    column(width = 12,
+           plotOutput("grafica_poligono"))
+  )
+)
+
+# Define server para la aplicación shiny
+server <- function(input, output) 
+{
+  
+# Actualizar la consulta SQL basada en las fechas seleccionadas
+datos_sql <- reactive({
+  fecha_inicial <- format(input$fecha_inicial, "%y%m%d")
+  fecha_final <- format(input$fecha_final, "%y%m%d")
+        
+# Conexion base de datos
+  SERVER="PEANYSRV4BDMOD1"
+  DATABASE="ANTADM_DSP"
+  USER="AdmDsp-PBI"
+  PASS="AdmDsp2018."
+  conexion <- odbcDriverConnect(paste0("DRIVER={SQL Server};
+                                       server=",SERVER,";
+                                       database=",DATABASE,";
+                                       uid=",USER,";
+                                       pwd=",PASS))
+        
+  consulta <- paste("select Fecha,Turno=substring(turno,7,1),Mt_FinCarga=HoraCarga,Mt_LlegoDestino=TSLlegoBota,Viaje_Cargado=(LLegoBota-FinCarga)/60.0,Pala,Camion,Origen,Destino,GpsXCarga,GpsYCarga,GpsXDescarga,GpsYDescarga from DescargasX 
+    where Turno between '", fecha_inicial, "a' and '", fecha_final, "b' and (GpsXDescarga<>0 or GpsYDescarga<>0) and ExtraLoad<>1", sep = "")
+  datos_sql <- sqlQuery(conexion,consulta)
+  closeAllConnections()
+  datos_sql
+})
+  
+  
+# Crear la tabla resultante
+output$resultado_table <- renderTable({
+datos <- datos_sql()
+    
+# Limite del pit
+datos1 <- read_excel("C:/Users/xcalsina/Desktop/Limit_Pit.xlsx")
+  
+# Definir los límites del polígono
+poligono <- SpatialPolygons(list(Polygons(list(Polygon(datos1)), ID = "limit")))
+pol_x <- poligono@polygons[[1]]@Polygons[[1]]@coords[,1]
+pol_y <- poligono@polygons[[1]]@Polygons[[1]]@coords[,2]
+dentro_fuera <- point.in.polygon(datos$GpsXDescarga, datos$GpsYDescarga, pol_x, pol_y)
+  
+resultado <- data.frame(Fecha = datos$Fecha,
+                        Turno = datos$Turno,
+                        Mt_FinCarga = datos$Mt_FinCarga,
+                        Mt_LLegoDestino = datos$Mt_LlegoDestino,
+                        Viaje_Cargado = round(datos$Viaje_Cargado, digits = 1),
+                        Pala = datos$Pala,
+                        Camion = datos$Camion,
+                        Origen = datos$Origen,
+                        Destino = datos$Destino,
+                        GpsXDescarga = datos$GpsXDescarga,
+                        GpsYDescarga = datos$GpsYDescarga,
+                        dentro_fuera = dentro_fuera)
+    
+resultado$etiqueta <- ifelse(resultado$dentro_fuera, "Dentro", "Fuera")
+    
+resultado
+  })
+
+
+
+output$grafica_poligono <- renderPlot({
+
+# Limite del pit
+  
+datos<-datos_sql()
+datos1 <- read_excel("C:/Users/xcalsina/Desktop/Limit_Pit.xlsx")  
+  
+  
+poligono <- SpatialPolygons(list(Polygons(list(Polygon(datos1)), ID = "limit")))
+pol_x <- poligono@polygons[[1]]@Polygons[[1]]@coords[,1]
+pol_y <- poligono@polygons[[1]]@Polygons[[1]]@coords[,2]
+dentro_fuera <- point.in.polygon(datos$GpsXDescarga, datos$GpsYDescarga, pol_x, pol_y)
+
+resultado <- data.frame(Fecha = datos$Fecha,
+                        Turno = datos$Turno,
+                        Mt_FinCarga = datos$Mt_FinCarga,
+                        Mt_LLegoDestino = datos$Mt_LlegoDestino,
+                        Viaje_Cargado = round(datos$Viaje_Cargado, digits = 1),
+                        Pala = datos$Pala,
+                        Camion = datos$Camion,
+                        Origen = datos$Origen,
+                        Destino = datos$Destino,
+                        GpsXDescarga = datos$GpsXDescarga,
+                        GpsYDescarga = datos$GpsYDescarga,
+                        dentro_fuera = dentro_fuera)
+    
+resultado$etiqueta <- ifelse(resultado$dentro_fuera, "Dentro", "Fuera")
+
+
+  # Crear un nuevo gráfico
+  plot(poligono, xlab = "Valores de X", ylab = "Valores de Y", 
+       main = "Gráfico de polígono y puntos fuera del límite")
+
+  # Dibujar los puntos que están dentro del límite
+  points(datos_sql()$GpsXDescarga[resultado$etiqueta == "Dentro"], 
+         datos_sql()$GpsYDescarga[resultado$etiqueta == "Dentro"], 
+         col = "red", pch = 16)
+
+  # Dibujar los puntos que están fuera del límite
+  points(datos_sql()$GpsXDescarga[resultado$etiqueta == "Fuera"], 
+         datos_sql()$GpsYDescarga[resultado$etiqueta == "Fuera"], 
+         col = "blue", pch = 16)
+
+})
+
+
+}
+
+# Ejecutar la aplicación shiny
+shinyApp(ui = ui, server = server)
+```
+
